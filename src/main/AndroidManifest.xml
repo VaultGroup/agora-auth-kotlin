@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+
+        <!--
+            SingleTop will cause the system to reuse this activity if its at the
+            top of the current task stack. Without it, the activity would be
+            seemingly recreated and all state would be lost
+        -->
+        <activity
+            android:name="com.mrisoftware.agoraauth.AgoraAuthWebViewActivity"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize"
+            android:exported="true">
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vaultre" android:host="agora-auth-staging" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
