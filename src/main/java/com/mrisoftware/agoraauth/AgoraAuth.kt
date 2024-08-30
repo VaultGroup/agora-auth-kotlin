@@ -1,5 +1,6 @@
 package com.mrisoftware.agoraauth
 
+import android.content.Intent
 import android.net.Uri
 import android.net.UrlQuerySanitizer
 import android.util.Base64
@@ -141,7 +142,14 @@ object AgoraAuth {
         builder.appendQueryParameter("client_id", clientConfig.clientId)
 
         val intent = AgoraAuthWebViewActivity.newInstance(context, builder.build().toString())
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)
+    }
+
+    internal fun canHandleRedirect(redirectUri: Uri): Boolean {
+        val clientRedirectUriString = clientConfig?.redirectUri ?: return false
+        val clientRedirectUri = Uri.parse(clientRedirectUriString)
+        return redirectUri.scheme == clientRedirectUri.scheme
     }
 
     internal fun handleRedirect(redirectUri: Uri): Boolean {

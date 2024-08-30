@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -62,8 +63,13 @@ class AgoraAuthWebViewActivity: AppCompatActivity() {
     // Handle our custom redirect url
     inner class CustomWebViewClient : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (AgoraAuth.handleRedirect(request.url)) {
+            if (AgoraAuth.canHandleRedirect(request.url)) {
+                // Finish this activity
                 this@AgoraAuthWebViewActivity.finish()
+                // Small delay before calling the delegate
+                Handler(mainLooper).postDelayed({
+                    AgoraAuth.handleRedirect(request.url)
+                }, 1000)
                 return true
             }
             return false
