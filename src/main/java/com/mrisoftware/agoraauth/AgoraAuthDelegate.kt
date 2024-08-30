@@ -19,5 +19,5 @@ interface AgoraAuthDelegate {
     /**
      * The context will never be stored but may be requested at any time
      */
-    fun agoraAuthContext(): Context
+    fun agoraAuthContext(): Context?
 }
