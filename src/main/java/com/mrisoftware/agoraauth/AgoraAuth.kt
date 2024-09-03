@@ -34,7 +34,7 @@ object AgoraAuth {
         // Ask the delegate for the client config
         delegate.agoraAuthClientConfig a@{ clientConfig ->
             if (clientConfig == null) {
-                AgoraAuth.delegate?.agoraAuthError("Missing client config")
+                AgoraAuth.delegate?.agoraAuthError(AgoraAuthError("Missing client config"))
                 return@a
             }
 
@@ -44,7 +44,7 @@ object AgoraAuth {
             // Fetch the open ID config
             fetchOpenidConfiguration(clientConfig) b@{ oauthConfig ->
                 if (oauthConfig == null) {
-                    AgoraAuth.delegate?.agoraAuthError("Missing Oauth config")
+                    AgoraAuth.delegate?.agoraAuthError(AgoraAuthError("Missing Oauth config"))
                     return@b
                 }
 
@@ -72,7 +72,7 @@ object AgoraAuth {
                 if (responseCode !in 200..299) {
                     connection.disconnect()
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("Server request failed with code $responseCode")
+                        delegate?.agoraAuthError(AgoraAuthError("Server request failed with code $responseCode"))
                         result(null)
                     }
                     return@launch
@@ -85,7 +85,7 @@ object AgoraAuth {
                     Json.decodeFromString<Map<String, JsonElement>>(data)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("JSON parse error")
+                        delegate?.agoraAuthError(AgoraAuthError("JSON parse error"))
                         result(null)
                     }
                     return@launch
@@ -98,7 +98,7 @@ object AgoraAuth {
 
                 if (listOf(issuer, authUrl, tokenUrl, userInfoUrl).contains(null)) {
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("Missing required oauth config properties")
+                        delegate?.agoraAuthError(AgoraAuthError("Missing required oauth config properties"))
                         result(null)
                     }
                     return@launch
@@ -114,7 +114,7 @@ object AgoraAuth {
 
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    delegate?.agoraAuthError("Request error ${e.localizedMessage}")
+                    delegate?.agoraAuthError(AgoraAuthError("Request error ${e.localizedMessage}"))
                     result(null)
                 }
             }
@@ -124,7 +124,7 @@ object AgoraAuth {
     @Suppress("NAME_SHADOWING")
     private fun requestAuthCode(clientConfig: AgoraClientConfig, oauthConfig: AgoraOauthConfig, authState: AgoraAuthState) {
         val context = delegate?.agoraAuthContext() ?: run {
-            delegate?.agoraAuthError("Context has gone away")
+            delegate?.agoraAuthError(AgoraAuthError("Context has gone away"))
             return@requestAuthCode
         }
 
@@ -140,6 +140,8 @@ object AgoraAuth {
         builder.appendQueryParameter("scope", clientConfig.scope)
         builder.appendQueryParameter("redirect_uri", clientConfig.redirectUri)
         builder.appendQueryParameter("client_id", clientConfig.clientId)
+        builder.appendQueryParameter("code_challenge", clientConfig.codeChallenge)
+        builder.appendQueryParameter("code_challenge_method", "S256")
 
         val intent = AgoraAuthWebViewActivity.newInstance(context, builder.build().toString())
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -153,8 +155,8 @@ object AgoraAuth {
     }
 
     internal fun handleRedirect(redirectUri: Uri): Boolean {
-        val clientRedirectUriString = clientConfig?.redirectUri ?: return false
-        val clientRedirectUri = Uri.parse(clientRedirectUriString)
+        val clientConfig = this.clientConfig ?: return false
+        val clientRedirectUri = Uri.parse(clientConfig.redirectUri)
 
         // Not our redirect
         if (redirectUri.scheme != clientRedirectUri.scheme) {
@@ -170,29 +172,29 @@ object AgoraAuth {
         if (error != null) {
             val errorDescription: String? = sani.getValue("error_description")
             if (errorDescription != null) {
-                delegate?.agoraAuthError("$error $errorDescription")
+                delegate?.agoraAuthError(AgoraAuthError("$error $errorDescription"))
             } else {
-                delegate?.agoraAuthError("$error")
+                delegate?.agoraAuthError(AgoraAuthError("$error"))
             }
             return true
         }
 
         val code: String? = sani.getValue("code")
         if (code == null) {
-            delegate?.agoraAuthError("auth code not found in redirect url")
+            delegate?.agoraAuthError(AgoraAuthError("auth code not found in redirect url"))
             return true
         }
 
         val state64: String? = sani.getValue("state")
         if (state64 == null) {
-            delegate?.agoraAuthError("auth code not found in redirect url")
+            delegate?.agoraAuthError(AgoraAuthError("auth code not found in redirect url"))
             return true
         }
 
         val state64Bytes = Base64.decode(state64, Base64.NO_WRAP)
         val stateJson = String(state64Bytes, Charsets.UTF_8)
         val state = Json.decodeFromString<Map<String, JsonElement>>(stateJson)
-        delegate?.agoraAuthSuccess(code, state)
+        delegate?.agoraAuthSuccess(code, clientConfig, state)
 
         return true
     }
@@ -200,17 +202,17 @@ object AgoraAuth {
     /** Exchange an auth code for a scoped access token that can be used for future requests */
     fun exchangeAuthCode(code: String, result: (String?) -> Unit) {
         val clientConfig = this.clientConfig ?: run {
-            delegate?.agoraAuthError("Missing client config")
+            delegate?.agoraAuthError(AgoraAuthError("Missing client config"))
             return@exchangeAuthCode
         }
 
         val oauthConfig = this.oauthConfig ?: run {
-            delegate?.agoraAuthError("Missing oauth config")
+            delegate?.agoraAuthError(AgoraAuthError("Missing oauth config"))
             return@exchangeAuthCode
         }
 
         val clientSecret = clientConfig.clientSecret ?: run {
-            delegate?.agoraAuthError("Unknown client secret, cannot exchange auth code")
+            delegate?.agoraAuthError(AgoraAuthError("Unknown client secret, cannot exchange auth code"))
             return@exchangeAuthCode
         }
 
@@ -224,6 +226,7 @@ object AgoraAuth {
                 uri.appendQueryParameter("grant_type", "authorization_code")
                 uri.appendQueryParameter("code", code)
                 uri.appendQueryParameter("redirect_uri", clientConfig.redirectUri)
+                uri.appendQueryParameter("code_verifier", clientConfig.codeVerifier)
 
                 val url = URL(uri.build().toString())
                 val connection = url.openConnection() as HttpURLConnection
@@ -236,7 +239,7 @@ object AgoraAuth {
                 if (responseCode !in 200..299) {
                     connection.disconnect()
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("Server request failed with code $responseCode")
+                        delegate?.agoraAuthError(AgoraAuthError("Server request failed with code $responseCode"))
                         result(null)
                     }
                     return@launch
@@ -249,7 +252,7 @@ object AgoraAuth {
                     Json.decodeFromString<Map<String, JsonElement>>(data)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("JSON parse error")
+                        delegate?.agoraAuthError(AgoraAuthError("JSON parse error"))
                         result(null)
                     }
                     return@launch
@@ -258,7 +261,7 @@ object AgoraAuth {
                 val accessToken = json["access_token"]?.jsonPrimitive?.content
                 if (accessToken == null) {
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("Access token not found")
+                        delegate?.agoraAuthError(AgoraAuthError("Access token not found"))
                         result(null)
                     }
                     return@launch
@@ -271,7 +274,7 @@ object AgoraAuth {
 
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    delegate?.agoraAuthError("Request error ${e.localizedMessage}")
+                    delegate?.agoraAuthError(AgoraAuthError("Request error ${e.localizedMessage}"))
                     result(null)
                 }
             }
@@ -281,7 +284,7 @@ object AgoraAuth {
     /** Exchange an auth code for a scoped access token that can be used for future requests */
     fun fetchUserInfo(accessToken: String, result: (Map<String, JsonElement>?) -> Unit) {
         val oauthConfig = this.oauthConfig ?: run {
-            delegate?.agoraAuthError("Missing oauth config")
+            delegate?.agoraAuthError(AgoraAuthError("Missing oauth config"))
             return@fetchUserInfo
         }
 
@@ -298,7 +301,7 @@ object AgoraAuth {
                 if (responseCode !in 200..299) {
                     connection.disconnect()
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("Server request failed with code $responseCode")
+                        delegate?.agoraAuthError(AgoraAuthError("Server request failed with code $responseCode"))
                         result(null)
                     }
                     return@launch
@@ -311,7 +314,7 @@ object AgoraAuth {
                     Json.decodeFromString<Map<String, JsonElement>>(data)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        delegate?.agoraAuthError("JSON parse error")
+                        delegate?.agoraAuthError(AgoraAuthError("JSON parse error"))
                         result(null)
                     }
                     return@launch
@@ -324,7 +327,7 @@ object AgoraAuth {
 
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    delegate?.agoraAuthError("Request error ${e.localizedMessage}")
+                    delegate?.agoraAuthError(AgoraAuthError("Request error ${e.localizedMessage}"))
                     result(null)
                 }
             }

@@ -4,8 +4,8 @@ import android.content.Context
 
 
 interface AgoraAuthDelegate {
-    fun agoraAuthSuccess(code: String, state: Map<String, Any>)
-    fun agoraAuthError(error: String)
+    fun agoraAuthSuccess(code: String, config: AgoraClientConfig, state: Map<String, Any>)
+    fun agoraAuthError(error: AgoraAuthError)
 
     /** Asks the delegate to return a client config */
     fun agoraAuthClientConfig(result: (AgoraClientConfig?) -> Unit)

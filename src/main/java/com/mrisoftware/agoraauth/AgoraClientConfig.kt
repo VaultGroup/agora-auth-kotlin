@@ -8,5 +8,12 @@ data class AgoraClientConfig (
      var scope: String = "openid offline_access device_sso email profile",
     /// The client secret that can be used to make requests to the IDP. Not all implementations
     /// require this secure key, consider whether you need to expose this secret client side.
-     var clientSecret: String? = null
-)
+     var clientSecret: String? = null,
+
+) {
+
+     val codeVerifier: String = AgoraPkce.generateCodeVerifier()
+     val codeChallenge: String = AgoraPkce.generateCodeChallenge(this.codeVerifier)
+}
+
+
