@@ -2,8 +2,8 @@ package com.mrisoftware.agoraauth
 
 import android.content.Intent
 import android.net.Uri
-import android.net.UrlQuerySanitizer
 import android.util.Base64
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -11,11 +11,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.Serializable
 import java.lang.ref.WeakReference
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 import java.util.UUID
 
 
@@ -53,7 +57,7 @@ object AgoraAuth {
 
                 // Get users auth state and make the auth code request
                 AgoraAuth.delegate?.agoraAuthState(clientConfig, oauthConfig) { authState ->
-                    requestAuthCode(clientConfig, oauthConfig, authState)
+                    requestAuthCode(clientConfig, oauthConfig, authState as Map<String, Any?>)
                 }
             }
         }
@@ -63,7 +67,7 @@ object AgoraAuth {
     private fun fetchOpenidConfiguration(config: AgoraClientConfig, result: (AgoraOauthConfig?) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val url = URL(config.issuer + "/.well-known/openid-configuration")
+                val url = URL(config.issuer + "/" + (config.authorityId ?: "default") + "/.well-known/openid-configuration")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connect()
@@ -92,9 +96,9 @@ object AgoraAuth {
                 }
 
                 val issuer = json["issuer"]?.jsonPrimitive?.content
+                val userInfoUrl = json["userinfo_endpoint"]?.jsonPrimitive?.content
                 val authUrl = json["authorization_endpoint"]?.jsonPrimitive?.content
                 val tokenUrl = json["token_endpoint"]?.jsonPrimitive?.content
-                val userInfoUrl = json["userinfo_endpoint"]?.jsonPrimitive?.content
 
                 if (listOf(issuer, authUrl, tokenUrl, userInfoUrl).contains(null)) {
                     withContext(Dispatchers.Main) {
@@ -122,28 +126,42 @@ object AgoraAuth {
     }
 
     @Suppress("NAME_SHADOWING")
-    private fun requestAuthCode(clientConfig: AgoraClientConfig, oauthConfig: AgoraOauthConfig, authState: AgoraAuthState) {
+    private fun requestAuthCode(clientConfig: AgoraClientConfig, oauthConfig: AgoraOauthConfig, authState: Map<String, Any?>) {
         val context = delegate?.agoraAuthContext() ?: run {
             delegate?.agoraAuthError(AgoraAuthError("Context has gone away"))
             return@requestAuthCode
         }
 
-        val stateJson = Json.encodeToString(authState)
-        val state64 = Base64.encodeToString(stateJson.toByteArray(Charsets.UTF_8), Base64.DEFAULT).trimIndent()
+        val authState = authState.toMutableMap()
+        if (!authState.keys.contains("source_redirect_url")) {
+            authState.put("source_redirect_url", clientConfig.redirectUri)
+        }
+
+        val stateJson = JSONObject(authState).toString()
 
         val builder = Uri.parse(oauthConfig.authUrl).buildUpon()
         builder.appendQueryParameter("nonce", UUID.randomUUID().toString())
         builder.appendQueryParameter("response_type", "code")
         builder.appendQueryParameter("response_mode", "query")
-        builder.appendQueryParameter("\$interstitial_email_federation", "true")
-        builder.appendQueryParameter("state", state64)
+        builder.appendQueryParameter("state", stateJson)
         builder.appendQueryParameter("scope", clientConfig.scope)
-        builder.appendQueryParameter("redirect_uri", clientConfig.redirectUri)
         builder.appendQueryParameter("client_id", clientConfig.clientId)
         builder.appendQueryParameter("code_challenge", clientConfig.codeChallenge)
         builder.appendQueryParameter("code_challenge_method", "S256")
+        builder.appendQueryParameter("login_hint", clientConfig.loginHint ?: "")
+        builder.appendQueryParameter("\$interstitial_email_federation", "true")
 
-        val intent = AgoraAuthWebViewActivity.newInstance(context, builder.build().toString())
+        // ==
+        // Even though these are included in the query string of the oauth config authorization endpoint,
+        // we must provide them again. Why? I do not know. But the user will be prompted to enter a client
+        // ID without them.
+        builder.appendQueryParameter("\$interstitial_prompt_mri_client_id", "true")
+        builder.appendQueryParameter("\$interstitial_tryGetClientIdFromCookie", "true")
+        // ==
+
+        val authUrl = builder.build().toString()
+        Log.i("AgoraAuth", "Auth URL => $authUrl")
+        val intent = AgoraAuthWebViewActivity.newInstance(context, authUrl)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)
     }
@@ -163,14 +181,10 @@ object AgoraAuth {
             return false
         }
 
-        val sani = UrlQuerySanitizer(redirectUri.toString())
-        sani.allowUnregisteredParamaters = true
-        sani.parseQuery(redirectUri.query)
-
         // Call the delegate and short circuit if theres an error
-        val error: String? = sani.getValue("error")
+        val error: String? = redirectUri.getQueryParameter("error")
         if (error != null) {
-            val errorDescription: String? = sani.getValue("error_description")
+            val errorDescription: String? = redirectUri.getQueryParameter("error_description")
             if (errorDescription != null) {
                 delegate?.agoraAuthError(AgoraAuthError("$error $errorDescription"))
             } else {
@@ -179,20 +193,19 @@ object AgoraAuth {
             return true
         }
 
-        val code: String? = sani.getValue("code")
+        val code: String? = redirectUri.getQueryParameter("code")
         if (code == null) {
             delegate?.agoraAuthError(AgoraAuthError("auth code not found in redirect url"))
             return true
         }
 
-        val state64: String? = sani.getValue("state")
-        if (state64 == null) {
+        val stateEncoded: String? = redirectUri.getQueryParameter("state")
+        if (stateEncoded == null) {
             delegate?.agoraAuthError(AgoraAuthError("auth code not found in redirect url"))
             return true
         }
 
-        val state64Bytes = Base64.decode(state64, Base64.NO_WRAP)
-        val stateJson = String(state64Bytes, Charsets.UTF_8)
+        val stateJson = URLDecoder.decode(stateEncoded, "UTF-8")
         val state = Json.decodeFromString<Map<String, JsonElement>>(stateJson)
         delegate?.agoraAuthSuccess(code, clientConfig, state)
 

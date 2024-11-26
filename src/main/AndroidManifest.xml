@@ -13,17 +13,26 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize"
             android:exported="true">
+
+            <!--
+            There are two IDP environments to consider, preview and production. All variants
+            should handle both environments so they can be tested.
+            -->
+
+            <!-- STAGING -->
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="vaultre" android:host="agora-auth-staging" />
+                <data android:scheme="com.mrisoftware.vault" android:host="agora-auth-staging" />
             </intent-filter>
+
+            <!-- PRODUCTION -->
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="vaultre" android:host="agora-auth" />
+                <data android:scheme="com.mrisoftware.vault" android:host="agora-auth" />
             </intent-filter>
         </activity>
     </application>
